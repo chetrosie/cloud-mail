@@ -15,223 +15,258 @@ import verifyRecordService from './verify-record-service';
 
 const accountService = {
 
-	async add(c, params, userId) {
+    async add(c, params, userId) {
 
-		const { addEmailVerify , addEmail, manyEmail, addVerifyCount, minEmailPrefix, emailPrefixFilter } = await settingService.query(c);
+        const { addEmailVerify, addEmail, manyEmail, addVerifyCount, minEmailPrefix, emailPrefixFilter } = await settingService.query(c);
 
-		let { email, token } = params;
+        let { email, token } = params;
 
+        // ============================================================
+        // 🛡️ [新增] 强制黑名单逻辑 (Start) - 修改自 GitHub
+        // ============================================================
+        
+        // 1. 获取邮箱前缀并转为小写 (例如 Admin -> admin)
+        // 注意：如果 email 为空，下面会报错，所以先做一个简单判空
+        if (email && verifyUtils.isEmail(email)) {
+            const checkPrefix = emailUtils.getName(email).toLowerCase();
 
-		if (!(addEmail === settingConst.addEmail.OPEN && manyEmail === settingConst.manyEmail.OPEN)) {
-			throw new BizError(t('addAccountDisabled'));
-		}
+            // 2. 定义禁止注册的列表 (你可以随时在这里添加新词)
+            const FORCE_BLOCK_LIST = [
+                // 系统保留词
+                "admin", "root", "system", "postmaster", "abuse", "webmaster", 
+                "hostmaster", "security", "ssl-admin", "operator",
+                // 业务功能词
+                "support", "info", "contact", "sales", "marketing", "help", 
+                "service", "billing", "noreply", "no-reply", "office", "hr", "job",
+                // 测试与垃圾词
+                "test", "guest", "user", "temp", "spam", "fake", "bot", 
+                "null", "undefined", "unknown", "trial", "demo"
+            ];
 
-
-		if (!email) {
-			throw new BizError(t('emptyEmail'));
-		}
-
-		if (!verifyUtils.isEmail(email)) {
-			throw new BizError(t('notEmail'));
-		}
-
-		if (!c.env.domain.includes(emailUtils.getDomain(email))) {
-			throw new BizError(t('notExistDomain'));
-		}
-
-		if (emailUtils.getName(email).length < minEmailPrefix) {
-			throw new BizError(t('minEmailPrefix', { msg: minEmailPrefix } ));
-		}
-
-		if (emailPrefixFilter.some(content => emailUtils.getName(email).includes(content))) {
-			throw new BizError(t('banEmailPrefix'));
-		}
-
-		let accountRow = await this.selectByEmailIncludeDel(c, email);
-
-		if (accountRow && accountRow.isDel === isDel.DELETE) {
-			throw new BizError(t('isDelAccount'));
-		}
-
-		if (accountRow) {
-			throw new BizError(t('isRegAccount'));
-		}
-
-		const userRow = await userService.selectById(c, userId);
-		const roleRow = await roleService.selectById(c, userRow.type);
-
-		if (userRow.email !== c.env.admin) {
-
-			if (roleRow.accountCount > 0) {
-				const userAccountCount = await accountService.countUserAccount(c, userId)
-				if(userAccountCount >= roleRow.accountCount) throw new BizError(t('accountLimit'), 403);
-			}
-
-			if(!roleService.hasAvailDomainPerm(roleRow.availDomain, email)) {
-				throw new BizError(t('noDomainPermAdd'),403)
-			}
-
-		}
-
-		let addVerifyOpen = false
-
-		if (addEmailVerify === settingConst.addEmailVerify.OPEN) {
-			addVerifyOpen = true
-			await turnstileService.verify(c, token);
-		}
-
-		if (addEmailVerify === settingConst.addEmailVerify.COUNT) {
-			addVerifyOpen = await verifyRecordService.isOpenAddVerify(c, addVerifyCount);
-			if (addVerifyOpen) {
-				await turnstileService.verify(c,token)
-			}
-		}
+            // 3. 执行检查：如果前缀在名单里，直接报错拦截
+            if (FORCE_BLOCK_LIST.includes(checkPrefix)) {
+                throw new BizError('该邮箱前缀为系统保留，禁止注册');
+            }
+            
+            // 4. 额外保护：禁止以 admin 或 test 开头 (例如 admin123, testuser)
+            // 如果你不希望禁止 admin123，可以把下面这3行代码删掉
+            if (checkPrefix.startsWith("admin") || checkPrefix.startsWith("test")) {
+                 throw new BizError('禁止使用 admin 或 test 开头的邮箱');
+            }
+        }
+        // ============================================================
+        // 🛡️ [新增] 强制黑名单逻辑 (End)
+        // ============================================================
 
 
-		accountRow = await orm(c).insert(account).values({ email: email, userId: userId, name: emailUtils.getName(email) }).returning().get();
+        if (!(addEmail === settingConst.addEmail.OPEN && manyEmail === settingConst.manyEmail.OPEN)) {
+            throw new BizError(t('addAccountDisabled'));
+        }
 
-		if (addEmailVerify === settingConst.addEmailVerify.COUNT && !addVerifyOpen) {
-			const row = await verifyRecordService.increaseAddCount(c);
-			addVerifyOpen = row.count >= addVerifyCount
-		}
+        if (!email) {
+            throw new BizError(t('emptyEmail'));
+        }
 
-		accountRow.addVerifyOpen = addVerifyOpen
-		return accountRow;
-	},
+        if (!verifyUtils.isEmail(email)) {
+            throw new BizError(t('notEmail'));
+        }
 
-	selectByEmailIncludeDel(c, email) {
-		return orm(c).select().from(account).where(sql`${account.email} COLLATE NOCASE = ${email}`).get();
-	},
+        if (!c.env.domain.includes(emailUtils.getDomain(email))) {
+            throw new BizError(t('notExistDomain'));
+        }
 
-	list(c, params, userId) {
+        if (emailUtils.getName(email).length < minEmailPrefix) {
+            throw new BizError(t('minEmailPrefix', { msg: minEmailPrefix }));
+        }
 
-		let { accountId, size } = params;
+        if (emailPrefixFilter.some(content => emailUtils.getName(email).includes(content))) {
+            throw new BizError(t('banEmailPrefix'));
+        }
 
-		accountId = Number(accountId);
-		size = Number(size);
+        let accountRow = await this.selectByEmailIncludeDel(c, email);
 
-		if (size > 30) {
-			size = 30;
-		}
+        if (accountRow && accountRow.isDel === isDel.DELETE) {
+            throw new BizError(t('isDelAccount'));
+        }
 
-		if (!accountId) {
-			accountId = 0;
-		}
-		return orm(c).select().from(account).where(
-			and(
-				eq(account.userId, userId),
-				eq(account.isDel, isDel.NORMAL),
-				gt(account.accountId, accountId)))
-			.orderBy(asc(account.accountId))
-			.limit(size)
-			.all();
-	},
+        if (accountRow) {
+            throw new BizError(t('isRegAccount'));
+        }
 
-	async delete(c, params, userId) {
+        const userRow = await userService.selectById(c, userId);
+        const roleRow = await roleService.selectById(c, userRow.type);
 
-		let { accountId } = params;
+        if (userRow.email !== c.env.admin) {
 
-		const user = await userService.selectById(c, userId);
-		const accountRow = await this.selectById(c, accountId);
+            if (roleRow.accountCount > 0) {
+                const userAccountCount = await accountService.countUserAccount(c, userId)
+                if (userAccountCount >= roleRow.accountCount) throw new BizError(t('accountLimit'), 403);
+            }
 
-		if (accountRow.email === user.email) {
-			throw new BizError(t('delMyAccount'));
-		}
+            if (!roleService.hasAvailDomainPerm(roleRow.availDomain, email)) {
+                throw new BizError(t('noDomainPermAdd'), 403)
+            }
 
-		if (accountRow.userId !== user.userId) {
-			throw new BizError(t('noUserAccount'));
-		}
+        }
 
-		await orm(c).update(account).set({ isDel: isDel.DELETE }).where(
-			and(eq(account.userId, userId),
-				eq(account.accountId, accountId)))
-			.run();
-	},
+        let addVerifyOpen = false
 
-	selectById(c, accountId) {
-		return orm(c).select().from(account).where(
-			and(eq(account.accountId, accountId),
-				eq(account.isDel, isDel.NORMAL)))
-			.get();
-	},
+        if (addEmailVerify === settingConst.addEmailVerify.OPEN) {
+            addVerifyOpen = true
+            await turnstileService.verify(c, token);
+        }
 
-	async insert(c, params) {
-		await orm(c).insert(account).values({ ...params }).returning();
-	},
+        if (addEmailVerify === settingConst.addEmailVerify.COUNT) {
+            addVerifyOpen = await verifyRecordService.isOpenAddVerify(c, addVerifyCount);
+            if (addVerifyOpen) {
+                await turnstileService.verify(c, token)
+            }
+        }
 
-	async insertList(c, list) {
-		await orm(c).insert(account).values(list).run();
-	},
+        accountRow = await orm(c).insert(account).values({ email: email, userId: userId, name: emailUtils.getName(email) }).returning().get();
 
-	async physicsDeleteByUserIds(c, userIds) {
-		await emailService.physicsDeleteUserIds(c, userIds);
-		await orm(c).delete(account).where(inArray(account.userId,userIds)).run();
-	},
+        if (addEmailVerify === settingConst.addEmailVerify.COUNT && !addVerifyOpen) {
+            const row = await verifyRecordService.increaseAddCount(c);
+            addVerifyOpen = row.count >= addVerifyCount
+        }
 
-	async selectUserAccountCountList(c, userIds, del = isDel.NORMAL) {
-		const result = await orm(c)
-			.select({
-				userId: account.userId,
-				count: count(account.accountId)
-			})
-			.from(account)
-			.where(and(
-				inArray(account.userId, userIds),
-				eq(account.isDel, del)
-			))
-			.groupBy(account.userId)
-		return result;
-	},
+        accountRow.addVerifyOpen = addVerifyOpen
+        return accountRow;
+    },
 
-	async countUserAccount(c, userId) {
-		const { num } = await orm(c).select({num: count()}).from(account).where(and(eq(account.userId, userId),eq(account.isDel, isDel.NORMAL))).get();
-		return num;
-	},
+    selectByEmailIncludeDel(c, email) {
+        return orm(c).select().from(account).where(sql`${account.email} COLLATE NOCASE = ${email}`).get();
+    },
 
-	async restoreByEmail(c, email) {
-		await orm(c).update(account).set({isDel: isDel.NORMAL}).where(eq(account.email, email)).run();
-	},
+    list(c, params, userId) {
 
-	async restoreByUserId(c, userId) {
-		await orm(c).update(account).set({isDel: isDel.NORMAL}).where(eq(account.userId, userId)).run();
-	},
+        let { accountId, size } = params;
 
-	async setName(c, params, userId) {
-		const { name, accountId } = params
-		if (name.length > 30) {
-			throw new BizError(t('usernameLengthLimit'));
-		}
-		await orm(c).update(account).set({name}).where(and(eq(account.userId, userId),eq(account.accountId, accountId))).run();
-	},
+        accountId = Number(accountId);
+        size = Number(size);
 
-	async allAccount(c, params) {
+        if (size > 30) {
+            size = 30;
+        }
 
-		let { userId, num, size } = params
+        if (!accountId) {
+            accountId = 0;
+        }
+        return orm(c).select().from(account).where(
+            and(
+                eq(account.userId, userId),
+                eq(account.isDel, isDel.NORMAL),
+                gt(account.accountId, accountId)))
+            .orderBy(asc(account.accountId))
+            .limit(size)
+            .all();
+    },
 
-		userId = Number(userId)
+    async delete(c, params, userId) {
 
-		num = Number(num)
-		size = Number(size)
+        let { accountId } = params;
 
-		if (size > 30) {
-			size = 30;
-		}
+        const user = await userService.selectById(c, userId);
+        const accountRow = await this.selectById(c, accountId);
 
-		num = (num - 1) * size;
+        if (accountRow.email === user.email) {
+            throw new BizError(t('delMyAccount'));
+        }
 
-		const userRow = await userService.selectByIdIncludeDel(c, userId);
+        if (accountRow.userId !== user.userId) {
+            throw new BizError(t('noUserAccount'));
+        }
 
-		const list = await orm(c).select().from(account).where(and(eq(account.userId, userId),ne(account.email,userRow.email))).limit(size).offset(num);
-		const { total } = await orm(c).select({ total: count() }).from(account).where(eq(account.userId, userId)).get();
+        await orm(c).update(account).set({ isDel: isDel.DELETE }).where(
+            and(eq(account.userId, userId),
+                eq(account.accountId, accountId)))
+            .run();
+    },
 
-		return { list, total }
-	},
+    selectById(c, accountId) {
+        return orm(c).select().from(account).where(
+            and(eq(account.accountId, accountId),
+                eq(account.isDel, isDel.NORMAL)))
+            .get();
+    },
 
-	async physicsDelete(c, params) {
-		const { accountId } = params
-		await emailService.physicsDeleteByAccountId(c, accountId)
-		await orm(c).delete(account).where(eq(account.accountId, accountId)).run();
-	}
+    async insert(c, params) {
+        await orm(c).insert(account).values({ ...params }).returning();
+    },
+
+    async insertList(c, list) {
+        await orm(c).insert(account).values(list).run();
+    },
+
+    async physicsDeleteByUserIds(c, userIds) {
+        await emailService.physicsDeleteUserIds(c, userIds);
+        await orm(c).delete(account).where(inArray(account.userId, userIds)).run();
+    },
+
+    async selectUserAccountCountList(c, userIds, del = isDel.NORMAL) {
+        const result = await orm(c)
+            .select({
+                userId: account.userId,
+                count: count(account.accountId)
+            })
+            .from(account)
+            .where(and(
+                inArray(account.userId, userIds),
+                eq(account.isDel, del)
+            ))
+            .groupBy(account.userId)
+        return result;
+    },
+
+    async countUserAccount(c, userId) {
+        const { num } = await orm(c).select({ num: count() }).from(account).where(and(eq(account.userId, userId), eq(account.isDel, isDel.NORMAL))).get();
+        return num;
+    },
+
+    async restoreByEmail(c, email) {
+        await orm(c).update(account).set({ isDel: isDel.NORMAL }).where(eq(account.email, email)).run();
+    },
+
+    async restoreByUserId(c, userId) {
+        await orm(c).update(account).set({ isDel: isDel.NORMAL }).where(eq(account.userId, userId)).run();
+    },
+
+    async setName(c, params, userId) {
+        const { name, accountId } = params
+        if (name.length > 30) {
+            throw new BizError(t('usernameLengthLimit'));
+        }
+        await orm(c).update(account).set({ name }).where(and(eq(account.userId, userId), eq(account.accountId, accountId))).run();
+    },
+
+    async allAccount(c, params) {
+
+        let { userId, num, size } = params
+
+        userId = Number(userId)
+
+        num = Number(num)
+        size = Number(size)
+
+        if (size > 30) {
+            size = 30;
+        }
+
+        num = (num - 1) * size;
+
+        const userRow = await userService.selectByIdIncludeDel(c, userId);
+
+        const list = await orm(c).select().from(account).where(and(eq(account.userId, userId), ne(account.email, userRow.email))).limit(size).offset(num);
+        const { total } = await orm(c).select({ total: count() }).from(account).where(eq(account.userId, userId)).get();
+
+        return { list, total }
+    },
+
+    async physicsDelete(c, params) {
+        const { accountId } = params
+        await emailService.physicsDeleteByAccountId(c, accountId)
+        await orm(c).delete(account).where(eq(account.accountId, accountId)).run();
+    }
 
 };
 
