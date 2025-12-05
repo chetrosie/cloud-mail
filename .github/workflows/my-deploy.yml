@@ -1,0 +1,32 @@
+name: Deploy Multi-Domain Mail Workers
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: # 允许手动点按钮触发
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    name: Deploy
+    steps:
+      - uses: actions/checkout@v4
+
+      # --- 部署 Worker 1 (默认环境) ---
+      - name: Deploy Worker for Domain A
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # 使用 -c 参数强制指定你的配置文件
+          command: deploy -c wrangler.my.toml
+
+      # --- 部署 Worker 2 (domain_b 环境) ---
+      - name: Deploy Worker for Domain B
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # 这里加了 --env 参数，指向我们在 toml 里定义的 [env.domain_b]
+          command: deploy -c wrangler.my.toml --env domain_b
