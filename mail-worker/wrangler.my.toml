@@ -1,0 +1,51 @@
+# =================================================================
+# 文件名: wrangler.my.toml
+# 说明: 这是你专属的配置文件，Fork 同步时绝对不会被覆盖。
+# =================================================================
+
+# --- 【Worker 1】: 用于域名 A (例如 example.com) ---
+name = "cloud-mail-a"    # 给第一个 worker 起个名字
+main = "src/index.js"            # 代码路径（跟随原作者更新）
+compatibility_date = "2025-12-05"
+
+# [Worker 1] 的触发路由 (可选，如果在 Cloudflare 后台配了也可以不写)
+# routes = [
+#   { pattern = "mail.example.com", custom_domain = true }
+# ]
+
+# [Worker 1] 的数据库绑定 (必须填入 Cloudflare 后台显示的真实 ID)
+[[d1_databases]]
+binding = "DB"  # 名字必须是 DB，不要改
+database_name = "cloud-mail"
+database_id = "41a1f023-f74a-44fa-b96a-c807e8b8cec7" # <--- 填入用于域名 A 的 D1 ID
+
+# [Worker 1] 的 KV 绑定
+[[kv_namespaces]]
+binding = "KV"  # 名字必须是 KV，不要改
+id = "3c75ad6cb4044638b37b84a0cc86901e" # <--- 填入用于域名 A 的 KV ID
+
+
+# =================================================================
+# --- 【Worker 2】: 用于域名 B (例如 test.com) ---
+# 使用 [env.环境名] 语法定义第二个独立 Worker
+# =================================================================
+[env.domain_b]
+name = "cloud-mail-b"    # 给第二个 worker 起个不同的名字
+
+# [Worker 2] 的触发路由 (可选)
+# routes = [
+#   { pattern = "monstercode.cn", custom_domain = true }
+# ]
+
+# [Worker 2] 的数据库绑定 (可以是同一个库，也可以是完全独立的库)
+[[env.domain_b.d1_databases]]
+binding = "DB"
+database_name = "cloud-mail-b"
+database_id = "91959be8-e4dc-4edf-a608-f1eb077d4d9b" # <--- 填入用于域名 B 的 D1 ID
+
+# [Worker 2] 的 KV 绑定
+[[env.domain_b.kv_namespaces]]
+binding = "KV"
+id = "b7487417ccef4aa09dc6c01559225ade" # <--- 填入用于域名 B 的 KV ID
+
+# 如果还有 Worker 3，继续复制上面的 env 块即可...
